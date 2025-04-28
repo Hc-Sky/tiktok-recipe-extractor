@@ -14,6 +14,7 @@ from fpdf import FPDF
 from fastapi.responses import FileResponse
 import shutil
 from pathlib import Path
+from tiktok_scraper import TikTokScraper
 
 # Create the FastAPI app
 app = FastAPI(
@@ -69,236 +70,77 @@ class RecipeResponse(BaseModel):
 def download_tiktok_video(url: str) -> str:
     """Download TikTok video and return the path to the downloaded file."""
     try:
-        import re
-        import requests
-        import time
         from urllib.parse import urlparse
 
         # Create a unique filename based on the URL
         temp_file = TEMP_DIR / f"{hash(url)}.mp4"
 
-        # Check if the URL is a TikTok URL or TikTok CDN URL
+        # Check if the URL is a TikTok URL or YouTube URL
         parsed_url = urlparse(url)
-        is_tiktok_url = any(domain in parsed_url.netloc for domain in ["tiktok.com", "tiktok", "v16-webapp", "v16.tiktokcdn"])
-        is_direct_cdn_url = any(domain in parsed_url.netloc for domain in ["v16-webapp", "v16.tiktokcdn"]) and parsed_url.path.endswith(('.mp4', '.mov'))
 
-        if not is_tiktok_url:
-            # If not a TikTok URL, check if it's a YouTube URL
-            if "youtube.com" in parsed_url.netloc or "youtu.be" in parsed_url.netloc:
-                from pytube import YouTube
+        if "youtube.com" in parsed_url.netloc or "youtu.be" in parsed_url.netloc:
+            # If it's a YouTube URL, use pytube
+            from pytube import YouTube
 
-                # Download the video using pytube
-                yt = YouTube(url)
-                stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+            # Download the video using pytube
+            yt = YouTube(url)
+            stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
 
-                if not stream:
-                    raise ValueError("No suitable video stream found")
+            if not stream:
+                raise ValueError("No suitable video stream found")
 
-                # Download to the temporary file
-                stream.download(output_path=str(TEMP_DIR), filename=f"{hash(url)}.mp4")
-            else:
-                raise ValueError(f"Unsupported URL: {url}. Only TikTok and YouTube URLs are supported.")
-        else:
-            # For TikTok URLs, we'll use a session-based approach with more realistic browser headers
-            session = requests.Session()
+            # Download to the temporary file
+            stream.download(output_path=str(TEMP_DIR), filename=f"{hash(url)}.mp4")
+        elif "tiktok.com" in parsed_url.netloc:
+            # For TikTok URLs, use the TikTokScraper library
+            scraper = TikTokScraper()
 
-            # Special handling for direct CDN URLs
-            if is_direct_cdn_url:
-                # For direct CDN URLs, we'll use specialized headers
-                cdn_headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept": "video/webm,video/mp4,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Accept-Encoding": "gzip, deflate, br",
-                    "Connection": "keep-alive",
-                    "Referer": "https://www.tiktok.com/",
-                    "Origin": "https://www.tiktok.com",
-                    "Sec-Fetch-Dest": "video",
-                    "Sec-Fetch-Mode": "no-cors",
-                    "Sec-Fetch-Site": "cross-site",
-                    "Range": "bytes=0-",
-                    "Pragma": "no-cache",
-                    "Cache-Control": "no-cache"
-                }
+            # Download the video
+            video_path = scraper.download_video(url, str(TEMP_DIR))
 
-                # Try multiple user agents if one fails
-                user_agents = [
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-                ]
+            # Get video metadata
+            try:
+                video_metadata = scraper.get_video_metadata(url)
+                # Log metadata for debugging
+                import logging
+                logging.info(f"TikTok video metadata: {video_metadata}")
+            except Exception as metadata_error:
+                # Log the error but continue with the download
+                import logging
+                logging.warning(f"Failed to get video metadata: {str(metadata_error)}")
 
-                # Try each user agent
-                for user_agent in user_agents:
-                    try:
-                        cdn_headers["User-Agent"] = user_agent
+            # If the download function returns a different path, copy it to our expected path
+            if video_path != str(temp_file):
+                # Get the filename from the returned path
+                video_name = os.path.basename(video_path)
 
-                        # Download the video with streaming
-                        response = session.get(
-                            url, 
-                            headers=cdn_headers,
-                            timeout=15,
-                            stream=True
-                        )
+                # Rename the downloaded video with a prefix
+                new_video_name = f"tiktok_{video_name}"
+                new_video_path = os.path.join(os.path.dirname(video_path), new_video_name)
 
-                        if response.status_code == 200:
-                            # Save the video to a file
-                            with open(temp_file, 'wb') as f:
-                                for chunk in response.iter_content(chunk_size=8192):
-                                    f.write(chunk)
-
-                            # If successful, break the loop
-                            if temp_file.exists() and temp_file.stat().st_size > 10240:
-                                break
-
-                        # If we got a 403, try the next user agent
-                        if response.status_code == 403:
-                            continue
-
-                        # For other errors, try a different approach
-                        if response.status_code != 200:
-                            break
-
-                    except requests.exceptions.RequestException:
-                        # If there's an error, try the next user agent
-                        continue
-
-                # If we couldn't download the video directly, try using yt-dlp
-                if not temp_file.exists() or temp_file.stat().st_size < 10240:
-                    try:
-                        import subprocess
-                        # Try using yt-dlp as a fallback
-                        subprocess.run(
-                            ["yt-dlp", "-o", str(temp_file), url],
-                            check=True,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE
-                        )
-                    except (subprocess.SubprocessError, FileNotFoundError):
-                        # If yt-dlp fails or is not installed, raise an error
-                        raise ValueError(f"Failed to download video from CDN URL: {url}")
-
-                # If we've successfully downloaded the video, return the path
-                if temp_file.exists() and temp_file.stat().st_size > 0:
-                    return str(temp_file)
-
-            # Set up headers that mimic a real browser more closely
-            browser_headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Sec-Fetch-User": "?1",
-                "Cache-Control": "max-age=0",
-                "Referer": "https://www.google.com/"
-            }
-
-            # First request to get the TikTok page
-            response = session.get(url, headers=browser_headers, timeout=10)
-            if response.status_code != 200:
-                raise ValueError(f"Failed to access TikTok URL: {url}, status code: {response.status_code}")
-
-            # Small delay to mimic human behavior
-            time.sleep(1)
-
-            # Extract the video URL from the HTML
-            video_url_match = re.search(r'"playAddr":"([^"]+)"', response.text)
-            if not video_url_match:
-                video_url_match = re.search(r'"downloadAddr":"([^"]+)"', response.text)
-
-            if not video_url_match:
-                # Try alternative patterns
-                video_url_match = re.search(r'<video[^>]*src="([^"]+)"', response.text)
-
-            if not video_url_match:
-                raise ValueError(f"Could not find video URL in TikTok page: {url}")
-
-            video_url = video_url_match.group(1).replace('\\u002F', '/').replace('\\/', '/')
-
-            # Update headers for video request
-            video_headers = browser_headers.copy()
-            video_headers.update({
-                "Referer": url,  # Set the TikTok URL as the referer
-                "Range": "bytes=0-",  # Request the whole file
-                "Sec-Fetch-Dest": "video",
-                "Sec-Fetch-Mode": "no-cors"
-            })
-
-            # Try to download with multiple attempts
-            max_attempts = 3
-            for attempt in range(max_attempts):
                 try:
-                    # Download the video
-                    video_response = session.get(
-                        video_url, 
-                        headers=video_headers, 
-                        timeout=15,
-                        stream=True  # Stream the response to handle large files
-                    )
+                    # Rename the file
+                    os.rename(video_path, new_video_path)
+                    video_path = new_video_path
 
-                    # Check if successful
-                    if video_response.status_code == 200:
-                        # Save the video to a file
-                        with open(temp_file, 'wb') as f:
-                            for chunk in video_response.iter_content(chunk_size=8192):
-                                f.write(chunk)
-                        break
-                    elif video_response.status_code == 403 and attempt < max_attempts - 1:
-                        # If forbidden and not the last attempt, try with a different user agent
-                        time.sleep(2)  # Wait before retry
-                        video_headers["User-Agent"] = [
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
-                            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-                            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                        ][attempt]
-                        continue
-                    else:
-                        raise ValueError(f"Failed to download video from URL: {video_url}, status code: {video_response.status_code}")
-                except requests.exceptions.RequestException as e:
-                    if attempt < max_attempts - 1:
-                        time.sleep(2)  # Wait before retry
-                        continue
-                    raise ValueError(f"Network error while downloading video: {str(e)}")
+                    # Log the rename operation
+                    import logging
+                    logging.info(f"Renamed video: {video_path}")
+                except Exception as rename_error:
+                    # Log the error but continue with the original path
+                    import logging
+                    logging.warning(f"Failed to rename video: {str(rename_error)}")
 
-            # If we've tried all attempts and still failed
-            if not temp_file.exists():
-                raise ValueError(f"Failed to download video after {max_attempts} attempts")
+                # Copy the file to our expected path
+                shutil.copy2(video_path, temp_file)
 
-            # If the file is too small (less than 10KB), it might be an error page
-            if temp_file.stat().st_size < 10240:
-                with open(temp_file, 'r', errors='ignore') as f:
-                    content = f.read(1000)
-                    if '<html' in content.lower() or '<!doctype html' in content.lower():
-                        raise ValueError(f"Downloaded content appears to be HTML, not a video file")
+                # Optionally, remove the original file if it's in a different location
+                if os.path.dirname(video_path) != str(TEMP_DIR):
+                    os.remove(video_path)
+        else:
+            raise ValueError(f"Unsupported URL: {url}. Only TikTok and YouTube URLs are supported.")
 
-            # Verify it's a valid video file
-            if temp_file.exists() and temp_file.stat().st_size > 0:
-                # Basic check to see if it's a video file (check for MP4 signature)
-                with open(temp_file, 'rb') as f:
-                    header = f.read(12)
-                    if not (header[4:8] == b'ftyp' and (header[8:12] == b'mp42' or header[8:12] == b'isom')):
-                        # Not a valid MP4 file, try direct download as a fallback
-                        try:
-                            import subprocess
-                            # Try using youtube-dl or yt-dlp as a fallback
-                            subprocess.run(
-                                ["yt-dlp", "-o", str(temp_file), url],
-                                check=True,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE
-                            )
-                        except (subprocess.SubprocessError, FileNotFoundError):
-                            # If yt-dlp fails or is not installed, raise the original error
-                            raise ValueError(f"Downloaded file is not a valid video file")
-            else:
-                raise FileNotFoundError(f"Failed to download video to {temp_file}")
-
+        # Verify the file exists
         if not temp_file.exists():
             raise FileNotFoundError(f"Failed to download video to {temp_file}")
 
@@ -714,6 +556,33 @@ async def download_pdf(filename: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(str(file_path), media_type="application/pdf", filename="recipe.pdf")
+
+@app.post("/download-video")
+async def download_video(request: TikTokRequest):
+    """Download a TikTok video and return the video file."""
+    try:
+        # Download video using the existing function
+        video_path = download_tiktok_video(request.url)
+
+        # Create a unique filename for the downloaded video
+        video_filename = f"tiktok_video_{hash(request.url)}.mp4"
+
+        # Copy the video to a new location with a more user-friendly name
+        user_video_path = TEMP_DIR / video_filename
+        shutil.copy2(video_path, user_video_path)
+
+        # Return the path to the video file for frontend to access
+        return {"video_link": f"/download-video-file/{video_filename}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/download-video-file/{filename}")
+async def download_video_file(filename: str):
+    """Download a video file."""
+    file_path = TEMP_DIR / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Video file not found")
+    return FileResponse(str(file_path), media_type="video/mp4", filename=filename)
 
 @app.get("/")
 async def root():

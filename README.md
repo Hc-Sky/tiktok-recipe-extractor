@@ -1,6 +1,84 @@
-# Getting Started with Create React App
+# TikTok Recipe Extractor
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A web application that extracts recipe information from TikTok videos and allows users to download TikTok videos directly.
+
+## Features
+
+- Extract recipe information from TikTok videos, including:
+  - Title and summary
+  - Ingredients and quantities
+  - Preparation steps
+  - Cooking and preparation time
+  - Nutrition information
+  - Health evaluation
+- Download TikTok videos directly
+- Generate PDF recipe cards
+- Customize recipe extraction based on dietary profiles (Weight Loss, Muscle Gain, Vegetarian)
+
+## Project Structure
+
+The project consists of two main parts:
+- Frontend: React application
+- Backend: FastAPI Python application
+
+## Getting Started
+
+### Backend Setup
+
+1. Navigate to the backend directory:
+   ```
+   cd tiktok-recipe-backend
+   ```
+
+2. Create a virtual environment (optional but recommended):
+   ```
+   python -m venv venv
+   venv\Scripts\activate
+   ```
+
+3. Install dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+
+4. Run the backend server:
+   ```
+   python main.py
+   ```
+   The backend server will start at http://127.0.0.1:8000
+
+### Frontend Setup
+
+1. Navigate to the project root directory
+
+2. Install dependencies:
+   ```
+   npm install
+   ```
+
+3. Run the frontend development server:
+   ```
+   npm start
+   ```
+   The frontend will start at http://localhost:3000
+
+## How to Use
+
+### Extracting Recipes
+
+1. Enter a TikTok video URL in the input field
+2. (Optional) Select a dietary profile from the dropdown menu
+3. Click the "Extract Recipe" button
+4. Wait for the recipe to be extracted and displayed
+
+### Downloading TikTok Videos
+
+1. Enter a TikTok video URL in the input field
+2. Click the "Download Video" button
+3. Wait for the video to be downloaded
+4. Click the "Video ready - Click to download" link to download the video to your device
+
+The application uses the tiktok_scraper library to download TikTok videos efficiently and reliably. It also supports downloading from YouTube URLs using pytube, with fallback to yt-dlp if needed.
 
 ## Available Scripts
 

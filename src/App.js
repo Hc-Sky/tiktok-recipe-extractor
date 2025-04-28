@@ -4,6 +4,7 @@ import { Input } from './components/ui/input';
 import { Label } from './components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from './components/ui/card';
+import { AlertCircle, Download } from 'lucide-react';
 
 function App() {
   const [link, setLink] = useState('');
@@ -11,6 +12,9 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+  const [videoLoading, setVideoLoading] = useState(false);
+  const [videoLink, setVideoLink] = useState(null);
+  const [videoError, setVideoError] = useState('');
 
   const API_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 
@@ -22,6 +26,8 @@ function App() {
 
     setLoading(true);
     setError('');
+    setVideoLink(null);
+    setVideoError('');
 
     try {
       const response = await fetch(`${API_URL}/extract`, {
@@ -45,6 +51,39 @@ function App() {
       setError(err.message || 'An error occurred');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDownloadVideo = async () => {
+    if (!link) {
+      setVideoError('Please enter a TikTok URL');
+      return;
+    }
+
+    setVideoLoading(true);
+    setVideoError('');
+
+    try {
+      const response = await fetch(`${API_URL}/download-video`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          url: link
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to download video');
+      }
+
+      const data = await response.json();
+      setVideoLink(`${API_URL}${data.video_link}`);
+    } catch (err) {
+      setVideoError(err.message || 'An error occurred while downloading the video');
+    } finally {
+      setVideoLoading(false);
     }
   };
 
@@ -89,10 +128,34 @@ function App() {
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
           </CardContent>
-          <CardFooter>
-            <Button onClick={handleSubmit} disabled={loading}>
-              {loading ? 'Extracting...' : 'Extract Recipe'}
-            </Button>
+          <CardFooter className="flex flex-col gap-4 sm:flex-row sm:justify-between">
+            <div className="flex flex-col gap-2 w-full sm:w-auto">
+              <Button onClick={handleSubmit} disabled={loading} className="w-full sm:w-auto">
+                {loading ? 'Extracting...' : 'Extract Recipe'}
+              </Button>
+              {error && <p className="text-destructive text-sm">{error}</p>}
+            </div>
+            <div className="flex flex-col gap-2 w-full sm:w-auto">
+              <Button 
+                onClick={handleDownloadVideo} 
+                disabled={videoLoading} 
+                variant="outline" 
+                className="w-full sm:w-auto flex gap-2 items-center"
+              >
+                <Download size={16} />
+                {videoLoading ? 'Downloading...' : 'Download Video'}
+              </Button>
+              {videoError && <p className="text-destructive text-sm">{videoError}</p>}
+              {videoLink && (
+                <a 
+                  href={videoLink} 
+                  download 
+                  className="text-primary text-sm flex items-center gap-1 hover:underline"
+                >
+                  <Download size={14} /> Video ready - Click to download
+                </a>
+              )}
+            </div>
           </CardFooter>
         </Card>
 
